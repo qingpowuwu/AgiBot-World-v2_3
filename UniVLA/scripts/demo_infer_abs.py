@@ -81,7 +81,7 @@ def infer(policy, cfg):
                     # delta ee pose | base coordinate
                     abs_actions = [
                         [0.0, 0.0, 0.0, 0.0, 0.0, 0.0,  # left arm: no change
-                         0.0, 0.0, 0.1, 0.0, 0.0, 0.0,  # right arm: x+0.1, z+0.1
+                         0.1, 0.0, 0.1, 0.0, 0.0, 0.0,  # right arm: x+0.1, z+0.1
                          0.0, 0.0]  # grippers: no change
                     ]
 
@@ -93,10 +93,11 @@ def infer(policy, cfg):
 
                     for i, joint_action in enumerate(joint_actions):
                         joint_cmd = []
-                        # Fill joint cmd with arm and gripper cmd
+                        # Fill joint command with arm and gripper commands
+                        # Format: [left_arm(7), left_gripper(1), right_arm(7), right_gripper(1)]
                         joint_cmd.extend(joint_action[0:7])   # Left arm joints
-                        joint_cmd.extend(joint_action[7:14])  # Right arm joints
                         joint_cmd.extend(joint_action[14:15]) # Left gripper  
+                        joint_cmd.extend(joint_action[7:14])  # Right arm joints
                         joint_cmd.extend(joint_action[15:16]) # Right gripper
                         pub_msg_buffer.append(joint_cmd)
 

@@ -112,7 +112,7 @@ def infer(policy, cfg):
                         # Format: [left_eef_delta(6), right_eef_delta(6), gripper_actions(2)]
                         test_action = [
                             0.0, 0.0, 0.0, 0.0, 0.0, 0.0,  # Left arm no movement - 左臂不动
-                            0.0, 0.0, 0.1, 0.0, 0.0, 0.0,  # Right arm: x+0.1m, z+0.1m in base frame - 右臂移动
+                            0.1, 0.0, 0.1, 0.0, 0.0, 0.0,  # Right arm: x+0.1m, z+0.1m in base frame - 右臂移动
                             0.0, 0.0  # Grippers no action - 夹爪不动
                         ]
                         
@@ -166,27 +166,31 @@ def infer(policy, cfg):
                         print(f"Added {len(joint_actions)} joint commands to buffer")
 
                 else:
-                    # Initialization phase - 初始化阶段
-                    # Initialize IK/FK solver with current robot configuration
-                    # 用当前机器人配置初始化IK/FK求解器
+                    # init ik fk solver
                     if init_arm is None:
-                        init_arm = []  # Interleaved format for dual-arm IK solver
-                        # Create interleaved joint configuration: [L0,R0,L1,R1,L2,R2,...]
+                        init_arm = []
                         for i in range(7):
                             init_arm.append(act_raw.position[i])      # Left arm joint i
                             init_arm.append(act_raw.position[i + 8])  # Right arm joint i
                         
-                        # Fix waist joints initialization - 修复腰部关节初始化
-                        # Check available joints and handle waist properly
-                        print(f"Total joints available: {len(act_raw.position)}")
-                        if len(act_raw.position) >= 18:
-                            # Full robot with waist joints at indices 16-17
-                            # 完整机器人，腰部关节在索引16-17
-                            init_waist = [act_raw.position[16], act_raw.position[17]]
-                        else:
-                            # No waist joints available, use default values
-                            # 无腰部关节，使用默认值
-                            init_waist = [0.0, 0.0]
+                        
+                        # Get waist and head joints from ROS topic (sim_ros_node.cur_joint_state)
+                        cur_joint_state = sim_ros_node.cur_joint_state
+                        joint_name_state_dict = {}
+                        for idx, name in enumerate(cur_joint_state.name):
+                            joint_name_state_dict[name] = cur_joint_state.position[idx]
+                        
+                        # Get waist joints (body joints)
+                        init_waist = [
+                            joint_name_state_dict["idx01_body_joint1"],
+                            joint_name_state_dict["idx02_body_joint2"]
+                        ]
+                        
+                        # Get head joints
+                        init_head = [
+                            joint_name_state_dict["idx11_head_joint1"],
+                            joint_name_state_dict["idx12_head_joint2"]
+                        ]
                         
                         print(f"init_arm (interleaved): {init_arm}")
                         print(f"init_waist: {init_waist}")
