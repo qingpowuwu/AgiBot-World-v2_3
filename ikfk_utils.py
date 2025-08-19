@@ -50,7 +50,7 @@ class IKFKSolver:
             right_arm_init=np.array(arm_init_joint_position[7:], dtype=np.float32),
             head_init=np.array(head_init_position, dtype=np.float32),
         )
-        self._solver.set_debug_mode(False)
+        self._solver.set_debug_mode(True)
         q_full = np.zeros(18)
         q_full[0] = waist_init_position[1]
         q_full[1] = waist_init_position[0]
@@ -115,12 +115,13 @@ class IKFKSolver:
         abs_eef_actions = []
 
         for _, action in enumerate(actions_np):
-            eefrot_left_xyzrpy_cur = eefrot_left_xyzrpy_last + action[0:6] # array([0., 0., 0., 0., 0., 0.])
-            eefrot_right_xyzrpy_cur = eefrot_right_xyzrpy_last + action[6:12] # array([0.1, 0. , 0.1, 0. , 0. , 0. ])
+            eefrot_left_xyzrpy_cur = eefrot_left_xyzrpy_last + action[0:6]  # 在base坐标系下累加, array([0.,  0.,  0.,  0., 0., 0.])
+            eefrot_right_xyzrpy_cur = eefrot_right_xyzrpy_last + action[6:12] # 在base坐标系下累加, array([0.1, 0.,  0.1, 0., 0., 0.])
 
             eefrot_left_xyzrpy_last = eefrot_left_xyzrpy_cur
             eefrot_right_xyzrpy_last = eefrot_right_xyzrpy_cur
 
+            # 关键：这里将base坐标系转换到center坐标系
             eefrot_left_mat_cur_center = self.center_T_base @ xyzrpy2mat(eefrot_left_xyzrpy_cur)
             eefrot_left_xyzrpy_cur_center = mat2xyzrpy(eefrot_left_mat_cur_center)
 
