@@ -36,9 +36,26 @@ def mat2xyzrpy(mat):
     xyzrpy = np.concatenate([xyz, rpy])
     return xyzrpy
 
+def cal_base_T_center(base_link_in_world, arm_base_link_in_world):
+    """
+    计算从base_link到arm_base_link的变换矩阵
+    
+    Args:
+        base_link_in_world: 4x4 matrix, base_link在世界坐标系中的位姿
+        arm_base_link_in_world: 4x4 matrix, arm_base_link在世界坐标系中的位姿
+    
+    Returns:
+        base_T_center: 4x4 matrix, 从base_link到arm_base_link的变换矩阵
+    """
+    # 计算从base_link到arm_base_link的变换
+    # base_T_center = base_link_in_world^(-1) * arm_base_link_in_world
+    base_link_in_world_inv = np.linalg.inv(base_link_in_world)
+    base_T_center = base_link_in_world_inv @ arm_base_link_in_world
+    
+    return base_T_center
 
 class IKFKSolver:
-    def __init__(self, arm_init_joint_position, head_init_position, waist_init_position):
+    def __init__(self, arm_init_joint_position, head_init_position, waist_init_position, base_T_center=None):
         self._solver = ik_solver.Solver(
             config_path=os.path.join(current_dir, "urdf_solver", "solver.yaml"),
             urdf_path=os.path.join(current_dir, "urdf_solver", "G1.urdf"),
@@ -51,11 +68,17 @@ class IKFKSolver:
             head_init=np.array(head_init_position, dtype=np.float32),
         )
         self._solver.set_debug_mode(False)
-        q_full = np.zeros(18)
-        q_full[0] = waist_init_position[1]
-        q_full[1] = waist_init_position[0]
-        # base_link｜arm_base_link
-        self.base_T_center = self._solver.compute_fk(q=q_full, start_link="base_link", end_link="arm_base_link")
+        
+        # 如果提供了外部计算的base_T_center，使用它；否则使用原来的计算方法
+        if base_T_center is not None:
+            # base_link｜arm_base_link
+            self.base_T_center = base_T_center
+        else:
+            q_full = np.zeros(18)
+            q_full[0] = waist_init_position[1]
+            q_full[1] = waist_init_position[0]
+            # base_link｜arm_base_link
+            self.base_T_center = self._solver.compute_fk(q=q_full, start_link="base_link", end_link="arm_base_link")
         self.center_T_base = np.linalg.inv(self.base_T_center)
 
     def eef_actions_to_joint(self, eef_actions, arm_joint_states, head_init_position):

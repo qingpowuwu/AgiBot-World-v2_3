@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Union
 import draccus
 from PIL import Image
 import torch
-from ikfk_utils import IKFKSolver
+from ikfk_utils import IKFKSolver, cal_base_T_center
 import itertools
 from collections import deque
 
@@ -129,8 +129,28 @@ def infer(policy, cfg):
                         ]
                         
                         if ik_fk_solver is None:
-                            # TBD waist
-                            ik_fk_solver = IKFKSolver(init_arm, init_head, init_waist)
+                            # 获取两个坐标系在世界坐标系中的位姿
+                            # 这里需要你从仿真环境中获取实际的变换矩阵
+                            base_link_in_world = np.array([
+                                [ 1.00000000e+00,  0.00000000e+00,  0.00000000e+00, -5.10262012e+00],
+                                [ 0.00000000e+00,  1.00000000e+00,  0.00000000e+00,  1.10153799e+01],
+                                [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00,  2.23517418e-08],
+                                [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00]
+                            ])
+
+                            arm_base_link_in_world = np.array([
+                                [ 8.74647618e-01, -1.57370774e-09,  4.84759226e-01, -4.82376909e+00],
+                                [ 5.61328180e-08,  9.99999980e-01, -9.80336749e-08,  1.10153799e+01],
+                                [-4.84759226e-01,  1.12955824e-07,  8.74647618e-01,  9.35265481e-01],
+                                [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00]
+                            ])
+                            
+                            # 计算base_T_center
+                            base_T_center = cal_base_T_center(base_link_in_world, arm_base_link_in_world)
+                            print(f"base_T_center: {base_T_center}")
+
+                            # 使用自定义的base_T_center初始化
+                            ik_fk_solver = IKFKSolver(init_arm, init_head, init_waist, base_T_center=base_T_center)
 
         sim_ros_node.loop_rate.sleep()
 
