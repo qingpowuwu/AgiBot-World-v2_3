@@ -81,20 +81,23 @@ def infer(policy, cfg):
                     # delta ee pose | base coordinate
                     abs_actions = [
                         [0.0, 0.0, 0.0, 0.0, 0.0, 0.0,  # left arm: no change
-                         0.1, 0.0, 0.1, 0.0, 0.0, 0.0,  # right arm: x+0.1, z+0.1
+                         0.0, 0.0, 0.1, 0.0, 0.0, 0.0,  # right arm: x+0.1, z+0.1
                          0.0, 0.0]  # grippers: no change
                     ]
 
                     arm_joint_state = np.array(list(state[0:7]) + list(state[8:15]))
-                    abs_eef_action = ik_fk_solver.compute_abs_eef_from_base(abs_actions, arm_joint_state)
-                    joint_actions = ik_fk_solver.eef_actions_to_joint(abs_eef_action, arm_joint_state, init_head)
+                    abs_eef_action = ik_fk_solver.compute_abs_eef_from_base(abs_actions, arm_joint_state) # ee pose in center coordinate system, len(abs_eef_action[0]) = 14
+                    joint_actions = ik_fk_solver.eef_actions_to_joint(abs_eef_action, arm_joint_state, init_head) # joint_actions, len(joint_actions[0]) = 16
                     
                    
 
-                    for i, _ in enumerate(joint_actions):
+                    for i, joint_action in enumerate(joint_actions):
                         joint_cmd = []
                         # Fill joint cmd with arm and gripper cmd
-                        joint_cmd = joint_actions[i][:7] + joint_actions[i][7:14] + joint_actions[i][14:16]
+                        joint_cmd.extend(joint_action[0:7])   # Left arm joints
+                        joint_cmd.extend(joint_action[7:14])  # Right arm joints
+                        joint_cmd.extend(joint_action[14:15]) # Left gripper  
+                        joint_cmd.extend(joint_action[15:16]) # Right gripper
                         pub_msg_buffer.append(joint_cmd)
 
                 else:

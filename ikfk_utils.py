@@ -50,10 +50,11 @@ class IKFKSolver:
             right_arm_init=np.array(arm_init_joint_position[7:], dtype=np.float32),
             head_init=np.array(head_init_position, dtype=np.float32),
         )
-        self._solver.set_debug_mode(True)
+        self._solver.set_debug_mode(False)
         q_full = np.zeros(18)
         q_full[0] = waist_init_position[1]
         q_full[1] = waist_init_position[0]
+        # base_link｜arm_base_link
         self.base_T_center = self._solver.compute_fk(q=q_full, start_link="base_link", end_link="arm_base_link")
         self.center_T_base = np.linalg.inv(self.base_T_center)
 
@@ -89,10 +90,12 @@ class IKFKSolver:
         return joint_actions
     
     def compute_abs_eef_from_base(self, actions, arm_joint_states):
+        """actions: delta_eef actions in base coordinate system"""
         actions_np = np.array(actions)
         left_joint_state = arm_joint_states[:7]
         right_joint_state = arm_joint_states[7:14]
 
+        #  arm_base_link｜gripper_l_center_link
         left_arm_T = self._solver.compute_part_fk(
             q_part=np.array(left_joint_state, dtype=np.float32),
             part=ik_solver.RobotPart.LEFT_ARM,
@@ -104,6 +107,7 @@ class IKFKSolver:
             from_base=False,
         )
 
+        # base_link｜gripper_l_center_link = base_link｜arm_base_link * arm_base_link｜gripper_l_center_link
         left_arm_base = self.base_T_center @ left_arm_T
         eefrot_left_xyzrpy = mat2xyzrpy(left_arm_base)
 
@@ -114,14 +118,16 @@ class IKFKSolver:
         eefrot_right_xyzrpy_last = eefrot_right_xyzrpy
         abs_eef_actions = []
 
+        # 累加 delta_eef in base 坐标系
+        # Then convert eef pose to center 坐标系
         for _, action in enumerate(actions_np):
-            eefrot_left_xyzrpy_cur = eefrot_left_xyzrpy_last + action[0:6]  # 在base坐标系下累加, array([0.,  0.,  0.,  0., 0., 0.])
-            eefrot_right_xyzrpy_cur = eefrot_right_xyzrpy_last + action[6:12] # 在base坐标系下累加, array([0.1, 0.,  0.1, 0., 0., 0.])
+            eefrot_left_xyzrpy_cur = eefrot_left_xyzrpy_last + action[0:6]    # array([0.,  0.,  0.,  0., 0., 0.])
+            eefrot_right_xyzrpy_cur = eefrot_right_xyzrpy_last + action[6:12] # array([0.1, 0.,  0.1, 0., 0., 0.])
 
             eefrot_left_xyzrpy_last = eefrot_left_xyzrpy_cur
             eefrot_right_xyzrpy_last = eefrot_right_xyzrpy_cur
 
-            # 关键：这里将base坐标系转换到center坐标系
+            # 将 delta_eef in base 坐标系 => in center 坐标系
             eefrot_left_mat_cur_center = self.center_T_base @ xyzrpy2mat(eefrot_left_xyzrpy_cur)
             eefrot_left_xyzrpy_cur_center = mat2xyzrpy(eefrot_left_mat_cur_center)
 
@@ -134,6 +140,7 @@ class IKFKSolver:
                 + action[12:14].tolist() # array([0., 0.])
             )
 
+        # eef pose in center 坐标系
         return abs_eef_actions
     
 
