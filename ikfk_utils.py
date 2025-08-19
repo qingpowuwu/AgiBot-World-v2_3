@@ -115,8 +115,8 @@ class IKFKSolver:
         abs_eef_actions = []
 
         for _, action in enumerate(actions_np):
-            eefrot_left_xyzrpy_cur = eefrot_left_xyzrpy_last + action[0:6]
-            eefrot_right_xyzrpy_cur = eefrot_right_xyzrpy_last + action[6:12]
+            eefrot_left_xyzrpy_cur = eefrot_left_xyzrpy_last + action[0:6] # array([0., 0., 0., 0., 0., 0.])
+            eefrot_right_xyzrpy_cur = eefrot_right_xyzrpy_last + action[6:12] # array([0.1, 0. , 0.1, 0. , 0. , 0. ])
 
             eefrot_left_xyzrpy_last = eefrot_left_xyzrpy_cur
             eefrot_right_xyzrpy_last = eefrot_right_xyzrpy_cur
@@ -128,9 +128,9 @@ class IKFKSolver:
             eefrot_right_xyzrpy_cur_center = mat2xyzrpy(eefrot_right_mat_cur_center)
 
             abs_eef_actions.append(
-                eefrot_left_xyzrpy_cur_center.tolist()
+                  eefrot_left_xyzrpy_cur_center.tolist()
                 + eefrot_right_xyzrpy_cur_center.tolist()
-                + action[12:14].tolist()
+                + action[12:14].tolist() # array([0., 0.])
             )
 
         return abs_eef_actions

@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 sys.path.append(str(Path(__file__).parent.parent))
+from PIL import Image
 from experiments.robot.geniesim.genie_model import WrappedGenieEvaluation, WrappedModel
 import rclpy
 import threading
@@ -55,7 +56,7 @@ def get_sim_time(sim_ros_node):
 
 
 def infer(policy, cfg):
-
+    debug = True  # Set to True to save frames for debugging
     rclpy.init()
     sim_ros_node = SimROSNode()
     spin_thread = threading.Thread(target=rclpy.spin, args=(sim_ros_node,))
@@ -106,6 +107,19 @@ def infer(policy, cfg):
                     )
 
                     state = np.array(act_raw.position)
+
+                if debug:
+                    os.makedirs("frames", exist_ok=True)
+                    img_h_pil = Image.fromarray(img_h) # (720, 1280, 3)
+                    img_l_pil = Image.fromarray(img_l) # (480, 848, 3)
+                    img_r_pil = Image.fromarray(img_r) # (480, 848, 3)
+
+                    img_l_pil.save(f'frames/wrist_l_{count:05d}.png')
+                    img_h_pil.save(f'frames/head_{count:05d}.png')
+                    img_r_pil.save(f'frames/wrist_r_{count:05d}.png')
+
+                    print(f"Saved frame {count} images.")
+                    print(f" - Saved images to path: frames/head_{count:05d}.png, frames/wrist_l_{count:05d}.png, frames/wrist_r_{count:05d}.png")
 
                     if cfg.with_proprio:
                         action_queue = policy.step(img_h, img_l, img_r, lang, state)
