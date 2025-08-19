@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Union
 import draccus
 from PIL import Image
 import torch
-from ikfk_utils import IKFKSolver, cal_base_T_center
+from ikfk_utils import IKFKSolver, cal_base_T_center, mat2xyzrpy
 import itertools
 from collections import deque
 
@@ -77,12 +77,36 @@ def infer(policy, cfg):
 
                     state = np.array(act_raw.position[0:16])
 
-                    # Simple test: right arm x + 0.1m, z + 0.1m 
+                    # 计算目标位置
+                    # target ee pose in base 坐标系
+                    target_pose_in_base = np.array([
+                        [-9.84044812e-01,  2.01776121e-02,  1.76772936e-01, 0.927342],
+                        [ 1.77920481e-01,  1.13445097e-01,  9.77483760e-01, -0.0591086],
+                        [-3.30735790e-04,  9.93339349e-01, -1.15225081e-01, 1.0373207],
+                        [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00, 1.00000000e+00]
+                    ])
+                    # current gripper_r_center_link in base 坐标系
+                    current_right_ee_pose_in_base = np.array([
+                        [-9.84044812e-01,  2.01776121e-02,  1.76772936e-01, 6.24140263e-01],
+                        [ 1.77920481e-01,  1.13445097e-01,  9.77483760e-01, -1.62116051e-01],
+                        [-3.30735790e-04,  9.93339349e-01, -1.15225081e-01, 7.85317540e-01],
+                        [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00, 1.00000000e+00]
+                    ])
+                    # 计算delta actions在base坐标系下
+                    # 左手臂保持不变，右手臂移动到目标位置
+                    delta_left = np.zeros(6)  # 左手臂不动
+
+                    # 计算右手臂的相对变换矩阵
+                    delta_right_matrix = np.linalg.inv(current_right_ee_pose_in_base) @ target_pose_in_base
+                    delta_right = mat2xyzrpy(delta_right_matrix)
+
                     # delta ee pose | base coordinate
                     abs_actions = [
-                        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0,  # left arm: no change
-                         0.1, 0.0, 0.1, 0.0, 0.0, 0.0,  # right arm: x+0.1, z+0.1
-                         0.0, 0.0]  # grippers: no change
+                        np.concatenate([
+                            delta_left,     # left arm: no change (6 elements)
+                            delta_right,    # right arm: move to target (6 elements) 
+                            [0.0, 0.0]      # grippers: no change (2 elements)
+                        ])
                     ]
 
                     arm_joint_state = np.array(list(state[0:7]) + list(state[8:15]))
@@ -146,7 +170,7 @@ def infer(policy, cfg):
                             ])
                             
                             # 计算base_T_center
-                            base_T_center = cal_base_T_center(base_link_in_world, arm_base_link_in_world)
+                            base_T_center = None
                             print(f"base_T_center: {base_T_center}")
 
                             # 使用自定义的base_T_center初始化
