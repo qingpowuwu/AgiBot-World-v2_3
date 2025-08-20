@@ -78,18 +78,26 @@ def infer(policy, cfg):
                     state = np.array(act_raw.position[0:16])
 
                     # To be implemented
-                    payload = None
-                    abs_actions = policy.infer(payload)
+                    # Simple test: right arm x + 0.1m, z + 0.1m 
+                    abs_actions = [
+                        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0,  # left arm: no change
+                         0.1, 0.0, 0.1, 0.0, 0.0, 0.0,  # right arm: x+0.1, z+0.1
+                         0.0, 0.0]  # grippers: no change
+                    ]
 
                     arm_joint_state = np.array(list(state[0:7]) + list(state[8:15]))
                     abs_eef_action = ik_fk_solver.compute_abs_eef_from_base(abs_actions, arm_joint_state)
                     joint_actions = ik_fk_solver.eef_actions_to_joint(abs_eef_action, arm_joint_state, init_head)
                    
                 
-                    for i, _ in enumerate(joint_actions):
+                    for i, joint_action in enumerate(joint_actions):
                         joint_cmd = []
                         # To be implemented
                         # - fill joint cmd with arm and gripper cmd
+                        joint_cmd.extend(joint_action[0:7])   # Left arm joints
+                        joint_cmd.extend(joint_action[14:15]) # Left gripper 
+                        joint_cmd.extend(joint_action[7:14])  # Right arm joints
+                        joint_cmd.extend(joint_action[15:16]) # Right gripper
                         pub_msg_buffer.append(joint_cmd)
 
                 else:
@@ -99,7 +107,25 @@ def infer(policy, cfg):
                         for i in range(7):
                             init_arm.append(act_raw.position[i])
                             init_arm.append(act_raw.position[i + 8])
-                        init_waist = act_raw.position[16:18]
+                        
+                        # Get waist and head joints from ROS topic (sim_ros_node.cur_joint_state)
+                        cur_joint_state = sim_ros_node.cur_joint_state
+                        joint_name_state_dict = {}
+                        for idx, name in enumerate(cur_joint_state.name):
+                            joint_name_state_dict[name] = cur_joint_state.position[idx]
+                        
+                        # Get waist joints (body joints)
+                        init_waist = [
+                            joint_name_state_dict["idx01_body_joint1"],
+                            joint_name_state_dict["idx02_body_joint2"]
+                        ]
+                        
+                        # Get head joints
+                        init_head = [
+                            joint_name_state_dict["idx11_head_joint1"],
+                            joint_name_state_dict["idx12_head_joint2"]
+                        ]
+                        
                         if ik_fk_solver is None:
                             # TBD waist
                             ik_fk_solver = IKFKSolver(init_arm, init_head, init_waist)
@@ -110,7 +136,7 @@ def infer(policy, cfg):
 @dataclass
 class DeployConfig:
   # To be implemented
-  pass
+  task_name: str = "test_task"
 
 
 

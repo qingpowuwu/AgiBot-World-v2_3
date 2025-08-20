@@ -18,6 +18,7 @@ import draccus
 from PIL import Image
 import torch
 from ikfk_utils import IKFKSolver, cal_base_T_center, mat2xyzrpy
+import ik_solver
 import itertools
 from collections import deque
 
@@ -30,7 +31,6 @@ def get_instruction(task_name):
     pass
 
 def infer(policy, cfg):
-
     rclpy.init()
     sim_ros_node = SimROSNode()
     spin_thread = threading.Thread(target=rclpy.spin, args=(sim_ros_node,))
@@ -44,8 +44,12 @@ def infer(policy, cfg):
     SIM_INIT_TIME = 10
     pub_msg_buffer = deque(maxlen=30)
 
-    lang = get_instruction(cfg.task_name)
-
+    task_completed = False
+    position_threshold = 0.02  # 降低到2cm
+    consecutive_success_count = 0
+    required_consecutive_success = 3  # 减少到3次
+    last_position = None
+    
     while rclpy.ok():
         if pub_msg_buffer:
             is_end = True if len(pub_msg_buffer) == 1 else False
@@ -57,7 +61,7 @@ def infer(policy, cfg):
             act_raw = sim_ros_node.get_joint_state()
             infer_start = sim_ros_node.is_infer_start()
              
-            if ((init_frame or infer_start) and
+            if not task_completed and ((init_frame or infer_start) and
                 (
                     img_h_raw
                     and img_l_raw
@@ -70,6 +74,10 @@ def infer(policy, cfg):
                 if sim_time > SIM_INIT_TIME and ik_fk_solver is not None:
                     init_frame = False
 
+                    # 如果还有未执行的动作，等待执行完成
+                    if len(pub_msg_buffer) > 5:  # 保留一些缓冲
+                        continue
+
                     count = count + 1
                     img_h = bridge.compressed_imgmsg_to_cv2(img_h_raw, desired_encoding="rgb8")
                     img_l = bridge.compressed_imgmsg_to_cv2(img_l_raw, desired_encoding="rgb8")
@@ -77,64 +85,105 @@ def infer(policy, cfg):
 
                     state = np.array(act_raw.position[0:16])
 
-                    # 计算目标位置
-                    # target ee pose in base 坐标系
-                    target_pose_in_base = np.array([
-                        [-9.84044812e-01,  2.01776121e-02,  1.76772936e-01, 0.927342],
-                        [ 1.77920481e-01,  1.13445097e-01,  9.77483760e-01, -0.0591086],
-                        [-3.30735790e-04,  9.93339349e-01, -1.15225081e-01, 1.0373207],
-                        [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00, 1.00000000e+00]
-                    ])
-                    # current gripper_r_center_link in base 坐标系
-                    current_right_ee_pose_in_base = np.array([
-                        [-9.84044812e-01,  2.01776121e-02,  1.76772936e-01, 6.24140263e-01],
-                        [ 1.77920481e-01,  1.13445097e-01,  9.77483760e-01, -1.62116051e-01],
-                        [-3.30735790e-04,  9.93339349e-01, -1.15225081e-01, 7.85317540e-01],
-                        [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00, 1.00000000e+00]
-                    ])
-                    # 计算delta actions在base坐标系下
-                    # 左手臂保持不变，右手臂移动到目标位置
-                    delta_left = np.zeros(6)  # 左手臂不动
+                    # 目标位置
+                    target_position = np.array([0.927342, -0.0591086, 1.0373207])
+                    
+                    # 计算当前右手位置 - 统一使用一种方法
+                    right_arm_joint_states = state[8:15]
+                    
+                    # 使用 from_base=True 直接得到在 base_link 坐标系中的位姿
+                    current_right_ee_pose_in_base = ik_fk_solver._solver.compute_part_fk(
+                        q_part=np.array(right_arm_joint_states, dtype=np.float32),
+                        part=ik_solver.RobotPart.RIGHT_ARM,
+                        from_base=True,  # 直接计算在 base_link 坐标系中的位姿
+                    )
 
-                    # 计算右手臂的相对变换矩阵
-                    delta_right_matrix = np.linalg.inv(current_right_ee_pose_in_base) @ target_pose_in_base
-                    delta_right = mat2xyzrpy(delta_right_matrix)
+                    # 计算位置误差
+                    current_position = current_right_ee_pose_in_base[:3, 3]
+                    position_error = np.linalg.norm(target_position - current_position)
+                    
+                    # 检查位置是否有显著变化
+                    if last_position is not None:
+                        position_change = np.linalg.norm(current_position - last_position)
+                        if position_change < 0.001:  # 如果位置变化很小，跳过这次计算
+                            continue
+                    
+                    last_position = current_position.copy()
+                    
+                    # 只在位置有明显变化时打印
+                    if count % 10 == 0:  # 每10步打印一次
+                        print(f"步骤 {count}: 当前位置误差: {position_error:.4f}")
+                        print(f"当前位置: {current_position}")
+                        print(f"目标位置: {target_position}")
+                    
+                    # 检查是否达到目标
+                    if position_error < position_threshold:
+                        consecutive_success_count += 1
+                        print(f"达到阈值！连续成功次数: {consecutive_success_count}")
+                        if consecutive_success_count >= required_consecutive_success:
+                            task_completed = True
+                            print("任务完成！")
+                            continue
+                    else:
+                        consecutive_success_count = 0
 
-                    # delta ee pose | base coordinate
+                    # 动态调整步长
+                    if position_error > 0.1:
+                        max_position_step = 0.03
+                    elif position_error > 0.05:
+                        max_position_step = 0.02
+                    else:
+                        max_position_step = 0.01
+
+                    # 计算移动方向和距离
+                    position_direction = target_position - current_position
+                    position_distance = np.linalg.norm(position_direction)
+                    
+                    # 限制位置步长
+                    if position_distance > max_position_step:
+                        position_direction = position_direction / position_distance * max_position_step
+                    
+                    # 构建增量动作
+                    delta_left = np.zeros(6)
+                    delta_right = np.zeros(6)
+                    delta_right[:3] = position_direction
+                    
                     abs_actions = [
                         np.concatenate([
                             delta_left,     # left arm: no change (6 elements)
-                            delta_right,    # right arm: move to target (6 elements) 
+                            delta_right,    # right arm: small position step (6 elements) 
                             [0.0, 0.0]      # grippers: no change (2 elements)
                         ])
                     ]
 
-                    arm_joint_state = np.array(list(state[0:7]) + list(state[8:15]))
-                    abs_eef_action = ik_fk_solver.compute_abs_eef_from_base(abs_actions, arm_joint_state) # ee pose in center coordinate system, len(abs_eef_action[0]) = 14
-                    joint_actions = ik_fk_solver.eef_actions_to_joint(abs_eef_action, arm_joint_state, init_head) # joint_actions, len(joint_actions[0]) = 16
-                    
-                   
+                    try:
+                        arm_joint_state = np.array(list(state[0:7]) + list(state[8:15]))
+                        abs_eef_action = ik_fk_solver.compute_abs_eef_from_base(abs_actions, arm_joint_state)
+                        joint_actions = ik_fk_solver.eef_actions_to_joint(abs_eef_action, arm_joint_state, init_head)
 
-                    for i, joint_action in enumerate(joint_actions):
-                        joint_cmd = []
-                        # Fill joint command with arm and gripper commands
-                        # Format: [left_arm(7), left_gripper(1), right_arm(7), right_gripper(1)]
-                        joint_cmd.extend(joint_action[0:7])   # Left arm joints
-                        joint_cmd.extend(joint_action[14:15]) # Left gripper  
-                        joint_cmd.extend(joint_action[7:14])  # Right arm joints
-                        joint_cmd.extend(joint_action[15:16]) # Right gripper
-                        pub_msg_buffer.append(joint_cmd)
+                        for i, joint_action in enumerate(joint_actions):
+                            joint_cmd = []
+                            joint_cmd.extend(joint_action[0:7])   # Left arm joints
+                            joint_cmd.extend(joint_action[14:15]) # Left gripper  
+                            joint_cmd.extend(joint_action[7:14])  # Right arm joints
+                            joint_cmd.extend(joint_action[15:16]) # Right gripper
+                            pub_msg_buffer.append(joint_cmd)
+                            
+                    except Exception as e:
+                        print(f"IK求解失败: {e}")
+                        # 如果IK求解失败，跳过这一步
+                        continue
 
                 else:
-                    # init ik fk solver
+                    # 初始化 IK FK solver
                     if init_arm is None:
-                        # Get initial arm joint positions from ROS topic (sim_ros_node.get_joint_state() )
+                        # Get initial arm joint positions from ROS topic
                         init_arm = []
                         for i in range(7):
                             init_arm.append(act_raw.position[i])
                             init_arm.append(act_raw.position[i + 8])
                         
-                        # Get waist and head joints from ROS topic (sim_ros_node.cur_joint_state)
+                        # Get waist and head joints from ROS topic
                         cur_joint_state = sim_ros_node.cur_joint_state
                         joint_name_state_dict = {}
                         for idx, name in enumerate(cur_joint_state.name):
@@ -153,31 +202,18 @@ def infer(policy, cfg):
                         ]
                         
                         if ik_fk_solver is None:
-                            # 获取两个坐标系在世界坐标系中的位姿
-                            # 这里需要你从仿真环境中获取实际的变换矩阵
-                            base_link_in_world = np.array([
-                                [ 1.00000000e+00,  0.00000000e+00,  0.00000000e+00, -5.10262012e+00],
-                                [ 0.00000000e+00,  1.00000000e+00,  0.00000000e+00,  1.10153799e+01],
-                                [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00,  2.23517418e-08],
-                                [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00]
-                            ])
-
-                            arm_base_link_in_world = np.array([
-                                [ 8.74647618e-01, -1.57370774e-09,  4.84759226e-01, -4.82376909e+00],
-                                [ 5.61328180e-08,  9.99999980e-01, -9.80336749e-08,  1.10153799e+01],
-                                [-4.84759226e-01,  1.12955824e-07,  8.74647618e-01,  9.35265481e-01],
+                            # 使用你提供的 base_T_center
+                            base_T_center = np.array([
+                                [ 8.74647618e-01, -1.57370774e-09,  4.84759226e-01,  2.78851030e-01],
+                                [ 5.61328180e-08,  9.99999980e-01, -9.80336749e-08,  0.00000000e+00],
+                                [-4.84759226e-01,  1.12955824e-07,  8.74647618e-01,  9.35265459e-01],
                                 [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00,  1.00000000e+00]
                             ])
                             
-                            # 计算base_T_center
-                            base_T_center = None
-                            print(f"base_T_center: {base_T_center}")
-
-                            # 使用自定义的base_T_center初始化
+                            print(f"使用 base_T_center:\n{base_T_center}")
                             ik_fk_solver = IKFKSolver(init_arm, init_head, init_waist, base_T_center=base_T_center)
 
         sim_ros_node.loop_rate.sleep()
-
 
 @dataclass
 class DeployConfig:
