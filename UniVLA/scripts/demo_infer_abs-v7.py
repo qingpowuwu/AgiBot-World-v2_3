@@ -41,7 +41,7 @@ def infer(policy, cfg):
     init_frame = True
     bridge = CvBridge()
     count = 0
-    SIM_INIT_TIME = 10
+    SIM_INIT_TIME = 30
     pub_msg_buffer = deque(maxlen=30)
 
     lang = get_instruction(cfg.task_name)
@@ -67,6 +67,7 @@ def infer(policy, cfg):
                 )
             ):
                 sim_time = get_sim_time(sim_ros_node)
+                print(f"Current sim time: {sim_time:.2f} seconds")
                 if sim_time > SIM_INIT_TIME and ik_fk_solver is not None:
                     init_frame = False
 
@@ -81,12 +82,13 @@ def infer(policy, cfg):
                     # Simple test: right arm x + 0.1m, z + 0.1m 
                     abs_actions = [
                         [0.0, 0.0, 0.0, 0.0, 0.0, 0.0,  # left arm: no change
-                         0.1, 0.0, 0.1, 0.0, 0.0, 0.0,  # right arm: x+0.1, z+0.1
+                         0.0, 0.0, 0.2, 0.0, 0.0, 0.0,  # right arm: x+0.1, z+0.1
                          0.0, 0.0]  # grippers: no change
                     ]
 
                     arm_joint_state = np.array(list(state[0:7]) + list(state[8:15]))
                     abs_eef_action = ik_fk_solver.compute_abs_eef_from_base(abs_actions, arm_joint_state)
+                    # arm_joint_state = array([-1.074 ,  0.6106,  0.2808, -1.2838,  0.72  ,  1.4951, -0.186 , 1.075 , -0.6114, -0.2807,  1.2838, -0.7319, -1.4952,  0.1876])
                     joint_actions = ik_fk_solver.eef_actions_to_joint(abs_eef_action, arm_joint_state, init_head)
                    
                 
@@ -102,12 +104,11 @@ def infer(policy, cfg):
 
                 else:
                     # init ik fk solver
-                    if init_arm is None:
-                        init_arm = []
-                        for i in range(7):
-                            init_arm.append(act_raw.position[i])
-                            init_arm.append(act_raw.position[i + 8])
-                        
+                    if init_arm is None and sim_time > SIM_INIT_TIME:
+                        state = np.array(act_raw.position[0:16])
+                        init_arm = list(state[0:7]) + list(state[8:15])
+                        # [-1.074, 0.6106, 0.2808, -1.2838, 0.72, 1.4951, -0.186, 1.075, -0.6114, -0.2807, 1.2838, -0.7319, -1.4952, 0.1876]
+
                         # Get waist and head joints from ROS topic (sim_ros_node.cur_joint_state)
                         cur_joint_state = sim_ros_node.cur_joint_state
                         joint_name_state_dict = {}
@@ -127,7 +128,7 @@ def infer(policy, cfg):
                         ]
                         
                         if ik_fk_solver is None:
-                            # TBD waist
+                            # TBD waist, init_arm = [-1.074, 1.075, 0.6106, -0.6114, 0.2808, -0.2807, -1.2838, 1.2838, 0.72, -0.7319, 1.4951, -1.4952, -0.186, 0.1876]
                             ik_fk_solver = IKFKSolver(init_arm, init_head, init_waist)
 
         sim_ros_node.loop_rate.sleep()
