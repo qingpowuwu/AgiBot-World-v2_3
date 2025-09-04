@@ -16,69 +16,63 @@ class ActionDecoder(torch.nn.Module):
         window_size=30,
         hidden_dim=512,
         with_proprio=False,
-        wogripper=True,
-    ):
+        wogripper=False,
+        ):
         super().__init__()
-
+        
+        self.with_proprio = with_proprio
+        self.wogripper = wogripper
+        
         if with_proprio:
             if wogripper:
-                self.proprio_proj = nn.Linear(n_joints - 2, hidden_dim)
+                self.proprio_proj = nn.Linear(n_joints-2, hidden_dim)  # remove gripper
             else:
                 self.proprio_proj = nn.Linear(n_joints, hidden_dim)
-
+            
         self.proj_l = nn.Linear(2176, vis_dim)
         self.proj_r = nn.Linear(2176, vis_dim)
         self.proj_h = nn.Linear(2176, vis_dim)
-
+        
         self.latent_action_pool = MAPBlock(
             n_layers=n_layers,
             vis_dim=vis_dim,
             embed_dim=hidden_dim,
-            n_heads=hidden_dim // 64,
-        )
-
+            n_heads=hidden_dim//64,
+            )
+        
         self.visual_pool = MAPBlock(
             vis_dim=vis_dim,
             embed_dim=hidden_dim,
-            n_heads=hidden_dim // 64,
-        )
-
+            n_heads=hidden_dim//64,
+            )
+        
         if with_proprio:
             self.proj = nn.Sequential(
-                nn.Linear(hidden_dim * 2, hidden_dim * 8),
+                nn.Linear(hidden_dim * 2, hidden_dim * 8), 
                 nn.GELU(),
                 nn.Linear(hidden_dim * 8, n_joints * window_size),
             )
         else:
             self.proj = nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim * 8),
+                nn.Linear(hidden_dim, hidden_dim * 8), 
                 nn.GELU(),
                 nn.Linear(hidden_dim * 8, n_joints * window_size),
             )
-
+        
     def forward(self, latent_action_tokens, visual_embed, raw_visual, proprio=None):
-
-        visual_embed = torch.cat(
-            (
-                visual_embed,
-                self.proj_h(raw_visual[:, :256, :]),
-                self.proj_l(raw_visual[:, 256:512, :]),
-                self.proj_r(raw_visual[:, 512:768, :]),
-            ),
-            dim=1,
-        )
+        
+        visual_embed = torch.cat((visual_embed, self.proj_h(raw_visual[:,:256,:]), self.proj_l(raw_visual[:,256:512,:]), self.proj_r(raw_visual[:,512:768,:])),dim=1)
         visual_embed = self.visual_pool(visual_embed)
-
+        
         latent_action_tokens = latent_action_tokens[:, -4:]
-        action_token = self.latent_action_pool(
-            latent_action_tokens, init_embed=visual_embed
-        )
-
+        action_token = self.latent_action_pool(latent_action_tokens, init_embed=visual_embed)
+        
         if proprio is not None:
             proprio = proprio.squeeze(1)
-            proprio_l_arm = proprio[:, :7]
-            proprio_r_arm = proprio[:, 8:-1]
-            proprio = torch.concat((proprio_l_arm, proprio_r_arm), dim=-1)
+            if self.wogripper:
+                proprio_l_arm = proprio[:,:7]
+                proprio_r_arm = proprio[:,8:-1]
+                proprio = torch.concat((proprio_l_arm, proprio_r_arm), dim=-1)
             proprio = self.proprio_proj(proprio)
             action = self.proj(torch.cat((action_token, proprio), dim=1))
         else:

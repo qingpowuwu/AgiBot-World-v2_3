@@ -30,7 +30,6 @@ def get_instruction(task_name):
     pass
 
 def infer(policy, cfg):
-
     rclpy.init()
     sim_ros_node = SimROSNode()
     spin_thread = threading.Thread(target=rclpy.spin, args=(sim_ros_node,))
@@ -79,10 +78,12 @@ def infer(policy, cfg):
 
                     # To be implemented
                     payload = None
-                    abs_actions = policy.infer(payload)
+                    # delta_ee_pose in base_link coordinate
+                    # shape 1x1x14: [[dx0, dy0, dz0, dR0, dP0, dY0, dx1, dy1, dz1, dR1, dP1, dY1, eef0, eef1]]
+                    delta_ee_pose = policy.infer(payload)  
 
                     arm_joint_state = np.array(list(state[0:7]) + list(state[8:15]))
-                    abs_eef_action = ik_fk_solver.compute_abs_eef_from_base(abs_actions, arm_joint_state)
+                    abs_eef_action = ik_fk_solver.compute_abs_eef_from_base(delta_ee_pose, arm_joint_state)
                     joint_actions = ik_fk_solver.eef_actions_to_joint(abs_eef_action, arm_joint_state, init_head)
                    
                 
@@ -93,16 +94,41 @@ def infer(policy, cfg):
                         pub_msg_buffer.append(joint_cmd)
 
                 else:
-                    # init ik fk solver
-                    if init_arm is None:
-                        init_arm = []
-                        for i in range(7):
-                            init_arm.append(act_raw.position[i])
-                            init_arm.append(act_raw.position[i + 8])
-                        init_waist = act_raw.position[16:18]
+                    if init_arm is None and sim_time > SIM_INIT_TIME:
+                        cur_joint_state = sim_ros_node.cur_joint_state
+                        joint_name_state_dict = {}
+                        for idx, name in enumerate(cur_joint_state.name):
+                            joint_name_state_dict[name] = cur_joint_state.position[idx]
+                        
+                        init_waist = [
+                            joint_name_state_dict["idx02_body_joint2"],
+                            joint_name_state_dict["idx01_body_joint1"]
+                        ]
+                        
+                        init_head = [
+                            joint_name_state_dict["idx11_head_joint1"],
+                            joint_name_state_dict["idx12_head_joint2"]
+                        ]
+
+                        init_arm = [
+                            joint_name_state_dict["idx21_arm_l_joint1"],
+                            joint_name_state_dict["idx22_arm_l_joint2"],
+                            joint_name_state_dict["idx23_arm_l_joint3"],
+                            joint_name_state_dict["idx24_arm_l_joint4"],
+                            joint_name_state_dict["idx25_arm_l_joint5"],
+                            joint_name_state_dict["idx26_arm_l_joint6"],
+                            joint_name_state_dict["idx27_arm_l_joint7"],
+                            joint_name_state_dict["idx61_arm_r_joint1"],
+                            joint_name_state_dict["idx62_arm_r_joint2"],
+                            joint_name_state_dict["idx63_arm_r_joint3"],
+                            joint_name_state_dict["idx64_arm_r_joint4"],
+                            joint_name_state_dict["idx65_arm_r_joint5"],
+                            joint_name_state_dict["idx66_arm_r_joint6"],
+                            joint_name_state_dict["idx67_arm_r_joint7"]
+                        ]
+                        
                         if ik_fk_solver is None:
-                            # TBD waist
-                            ik_fk_solver = IKFKSolver(init_arm, init_head, init_waist)
+                            ik_fk_solver = IKFKSolver(init_arm, init_head, init_waist) 
 
         sim_ros_node.loop_rate.sleep()
 

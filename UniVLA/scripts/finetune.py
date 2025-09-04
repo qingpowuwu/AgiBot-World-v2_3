@@ -271,6 +271,7 @@ def finetune(cfg):
         decoder_n_layers=cfg.decoder_n_layers,
         decoder_hidden_dim=cfg.decoder_hidden_dim,
         with_proprio=cfg.with_proprio,
+        wogripper=cfg.wogripper,
         action_decoder_path=cfg.adr_path,
         decoupled_loss=cfg.decouple,
         ).to(device_id)
